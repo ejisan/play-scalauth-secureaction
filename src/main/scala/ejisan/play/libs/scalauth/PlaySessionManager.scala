@@ -3,55 +3,55 @@ package ejisan.play.libs.scalauth
 import play.api.mvc.{ Result, RequestHeader }
 import play.api.{ Configuration, Logger }
 
+case class Session(id: String, impersonator: Option[String]) {
+  def toSeq(SESSION_COOKIE_NAME: String, IMPERSONATING_SESSION_COOKIE_NAME: String): Seq[(String, String)] =
+    Seq(SESSION_COOKIE_NAME -> Some(id), IMPERSONATING_SESSION_COOKIE_NAME -> impersonator).collect {
+      case (key, Some(value)) => (key, value)
+    }
+}
+
 class PlaySessionManager(configuration: Configuration) {
   val SESSION_COOKIE_NAME: String =
     configuration.getString("scalauth.play.secure_action.cookie_name").getOrElse("SESSION")
   val IMPERSONATING_SESSION_COOKIE_NAME: String =
     configuration.getString("scalauth.play.secure_action.impersonator_cookie_name").getOrElse("IMPERSONATOR")
 
-  def start(id: String)(result: => Result)(implicit request: RequestHeader): Result = {
-    Logger.debug(s"Start session for ID: `$id`.")
-    result
-      .removingFromSession(SESSION_COOKIE_NAME, IMPERSONATING_SESSION_COOKIE_NAME)
-      .addingToSession(SESSION_COOKIE_NAME -> id)
+  def set(session: Session)(result: => Result)(implicit request: RequestHeader): Result = {
+    Logger.debug(s"Set session for ID: `${session.id}` and IMPERSONATOR_ID: `${session.impersonator.getOrElse("N/A")}`.")
+    forceEnd(result).addingToSession(session.toSeq(SESSION_COOKIE_NAME, IMPERSONATING_SESSION_COOKIE_NAME):_*)
   }
 
-  def restart(result: => Result)(implicit request: RequestHeader): Result = {
-    Logger.debug(s"Restart session.")
-    result
-      .removingFromSession(SESSION_COOKIE_NAME, IMPERSONATING_SESSION_COOKIE_NAME)
-      .addingToSession(request.session.data.filterKeys(k => k == SESSION_COOKIE_NAME || k == IMPERSONATING_SESSION_COOKIE_NAME).toSeq:_*)
-  }
+  def get(implicit request: RequestHeader): Option[Session] =
+    request.session.get(SESSION_COOKIE_NAME).map(Session(_, request.session.get(IMPERSONATING_SESSION_COOKIE_NAME)))
+
+  def start(id: String)(result: => Result)(implicit request: RequestHeader): Result =
+    set(Session(id, None))(result)
+
+  def restart(result: => Result)(implicit request: RequestHeader): Result =
+    get.map(set(_)(result)).getOrElse(result)
 
   def impersonate(id: String)(result: => Result)(implicit request: RequestHeader): Result = {
     val impersonator = try {
       request.session(SESSION_COOKIE_NAME)
     } catch {
       case _: NoSuchElementException =>
-        Logger.error("Impersonator must start session before impersonating.")
-        throw new IllegalStateException("Impersonator must start session before impersonating.")
+      val e = new IllegalStateException("Impersonator must start main session before impersonating session.")
+        Logger.error("Main session not found", e)
+        throw e
     }
-    Logger.debug(s"Session `${request.session(SESSION_COOKIE_NAME)}` impersonates session `${request.session(IMPERSONATING_SESSION_COOKIE_NAME)}`.")
-    result
-      .removingFromSession(SESSION_COOKIE_NAME, IMPERSONATING_SESSION_COOKIE_NAME)
-      .addingToSession(SESSION_COOKIE_NAME -> id, IMPERSONATING_SESSION_COOKIE_NAME -> impersonator)
+    set(Session(id, Some(impersonator)))(result)
   }
 
   def end(result: => Result)(implicit request: RequestHeader): Result = {
     if (request.session.data.keySet.exists(_ == IMPERSONATING_SESSION_COOKIE_NAME)) {
-      Logger.debug(s"End session for IMPERSONATOR_ID: `${request.session(IMPERSONATING_SESSION_COOKIE_NAME)}`.")
       result.removingFromSession(IMPERSONATING_SESSION_COOKIE_NAME)
     } else if (request.session.data.keySet.exists(_ == SESSION_COOKIE_NAME)) {
-      Logger.debug(s"End session for ID: `${request.session(SESSION_COOKIE_NAME)}`.")
       result.removingFromSession(SESSION_COOKIE_NAME)
     } else {
-      Logger.debug(s"Nothing end session.")
       result
     }
   }
 
-  def forceEnd(result: => Result)(implicit request: RequestHeader): Result = {
-    Logger.debug(s"Force end sessions for ID: `${request.session.get(SESSION_COOKIE_NAME).getOrElse("N/A")}` and IMPERSONATOR_ID: `${request.session.get(IMPERSONATING_SESSION_COOKIE_NAME).getOrElse("N/A")}`.")
+  def forceEnd(result: => Result)(implicit request: RequestHeader): Result =
     result.removingFromSession(SESSION_COOKIE_NAME, IMPERSONATING_SESSION_COOKIE_NAME)
-  }
 }
