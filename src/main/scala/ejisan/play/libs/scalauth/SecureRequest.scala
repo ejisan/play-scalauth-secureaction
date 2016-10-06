@@ -12,11 +12,8 @@ object SecureRequest {
   def apply[A](request: Request[A]): UnauthorizedRequest[A] =
     new UnauthorizedRequest(request)
 
-  def apply[A, S](request: Request[A], optSubject: Option[S]): AuthenticatedRequest[A, S] =
-    new AuthenticatedRequest(request, optSubject)
-
   def apply[A, S](request: Request[A], subject: S): AuthenticatedRequest[A, S] =
-    new AuthenticatedRequest(request, Some(subject))
+    new AuthenticatedRequest(request, subject)
 
   def anonymous[A](request: Request[A]): AuthenticatedRequest[A, _] = apply(request, None)
 
@@ -24,15 +21,20 @@ object SecureRequest {
     = Some((request.map(r => r)))
 }
 
-class AuthenticatedRequest[A, S](request: Request[A], subject: Option[S])
+class AuthenticatedRequest[A, S](request: Request[A], subject: S)
   extends WrappedRequest[A](request) with SecureRequest[A] {
   def isSuccess: Boolean = true
-  def isAnonymous: Boolean = subject.isEmpty
-  def get: S = subject.get
-  override def toString: String = s"AuthenticatedRequest(${request.toString}, ${subject.map(_.toString).getOrElse("Anonymous")})"
+  def get: S = subject
+  override def toString: String = s"AuthenticatedRequest(${request.toString}, ${subject.toString})"
 }
 
-class UnauthorizedRequest[A](request: Request[A]) extends WrappedRequest[A](request) with SecureRequest[A] {
-  def isSuccess: Boolean = false
+class AnonymousRequest[A](request: Request[A])
+  extends WrappedRequest[A](request) with SecureRequest[A] {
+  def isSuccess: Boolean = true
+  override def toString: String = s"AnonymousRequest(${request.toString})"
+}
+
+class UnauthorizedRequest[A](request: Request[A]) extends AnonymousRequest[A](request) {
+  override def isSuccess: Boolean = false
   override def toString: String = s"UnauthorizedRequest(${request.toString})"
 }
